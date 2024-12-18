@@ -1,0 +1,371 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <title>PDF Form Coordinates</title>
+    <style>
+      .container {
+        display: flex;
+        gap: 20px;
+        padding: 20px;
+      }
+      .form-container {
+        width: 400px;
+        padding: 20px;
+        border: 1px solid #ccc;
+      }
+      .preview-container {
+        flex-grow: 1;
+        border: 1px solid #ccc;
+        padding: 20px;
+        position: relative;
+      }
+      .form-group {
+        margin-bottom: 15px;
+      }
+      .form-group label {
+        display: block;
+        margin-bottom: 5px;
+      }
+      .coordinates {
+        display: flex;
+        gap: 10px;
+      }
+      .coordinates input {
+        width: 80px;
+      }
+      button {
+        padding: 10px 20px;
+        background: #007bff;
+        color: white;
+        border: none;
+        border-radius: 4px;
+        cursor: pointer;
+        margin-right: 10px;
+      }
+      #pdf-canvas {
+        border: 1px solid #ddd;
+        margin-top: 20px;
+        margin-left: 30px;
+        margin-top: 40px;
+      }
+      .sample-pdf {
+        margin-bottom: 20px;
+        padding: 10px;
+        background: #f5f5f5;
+        border-radius: 4px;
+      }
+      .ruler-x {
+        position: absolute;
+        top: 60px;
+        left: 50px;
+        height: 20px;
+        background: #f0f0f0;
+        z-index: 1;
+      }
+      .ruler-y {
+        position: absolute;
+        top: 80px;
+        left: 20px;
+        width: 30px;
+        background: #f0f0f0;
+        z-index: 1;
+      }
+      .coordinate-display {
+        position: fixed;
+        background: rgba(0, 0, 0, 0.7);
+        color: white;
+        padding: 5px 10px;
+        border-radius: 3px;
+        font-size: 12px;
+        pointer-events: none;
+        z-index: 1000;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="container">
+      <div class="form-container">
+        <h2>PDF Form Field Coordinates</h2>
+
+        <!-- Sample PDF Section -->
+        <div class="sample-pdf">
+          <h3>Sample PDF</h3>
+          <button onclick="loadSamplePDF()">Load Sample PDF</button>
+          <p>or</p>
+          <input
+            type="file"
+            id="pdf-file"
+            accept=".pdf"
+            onchange="handlePDFUpload(event)"
+          />
+          <p>Load Coordinates:</p>
+          <input
+            type="file"
+            id="coordinates-file"
+            accept=".json"
+            onchange="loadCoordinates(event)"
+          />
+        </div>
+
+        <div id="fields-container">
+          <div class="form-group">
+            <label>Field 1</label>
+            <input type="text" class="field-value" placeholder="Field Value" />
+            <div class="coordinates">
+              <input type="number" class="x-coord" placeholder="X" />
+              <input type="number" class="y-coord" placeholder="Y" />
+            </div>
+          </div>
+        </div>
+        <button onclick="addField()">Add Field</button>
+        <button onclick="previewText()">Preview Text</button>
+        <button onclick="saveCoordinates()">Save Coordinates</button>
+      </div>
+
+      <div class="preview-container">
+        <h2>PDF Preview</h2>
+        <canvas id="ruler-x" class="ruler-x"></canvas>
+        <canvas id="ruler-y" class="ruler-y"></canvas>
+        <canvas id="pdf-canvas"></canvas>
+      </div>
+    </div>
+
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/2.11.338/pdf.min.js"></script>
+    <script>
+      pdfjsLib.GlobalWorkerOptions.workerSrc =
+        'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/2.11.338/pdf.worker.min.js';
+
+      let currentPDF = null;
+      let currentPage = null;
+      const canvas = document.getElementById('pdf-canvas');
+      const rulerX = document.getElementById('ruler-x');
+      const rulerY = document.getElementById('ruler-y');
+      const ctx = canvas.getContext('2d');
+      const ctxX = rulerX.getContext('2d');
+      const ctxY = rulerY.getContext('2d');
+      let fieldCount = 1;
+      let viewport;
+
+      function drawRulers(width, height) {
+        rulerX.width = width;
+        rulerX.height = 20;
+        rulerY.width = 30;
+        rulerY.height = height;
+
+        // Draw X ruler
+        ctxX.fillStyle = '#f0f0f0';
+        ctxX.fillRect(0, 0, width, 20);
+        ctxX.fillStyle = '#000';
+        for (let i = 0; i <= width / 1.5; i += 10) {
+          const canvasX = i * 1.5;
+          if (i % 50 === 0) {
+            ctxX.fillText(i.toString(), canvasX + 2, 15);
+            ctxX.fillRect(canvasX, 10, 2, 10);
+          } else {
+            ctxX.fillRect(canvasX, 12, 1, 8);
+          }
+        }
+
+        // Draw Y ruler
+        ctxY.fillStyle = '#f0f0f0';
+        ctxY.fillRect(0, 0, 30, height);
+        ctxY.fillStyle = '#000';
+        for (let i = 0; i <= height / 1.5; i += 10) {
+          const canvasY = i * 1.5;
+          if (i % 50 === 0) {
+            ctxY.fillText(i.toString(), 2, canvasY + 15);
+            ctxY.fillRect(20, canvasY, 10, 2);
+          } else {
+            ctxY.fillRect(22, canvasY, 8, 1);
+          }
+        }
+      }
+
+      // Load sample PDF
+      async function loadSamplePDF() {
+        const samplePDFUrl =
+          'https://raw.githubusercontent.com/mozilla/pdf.js/master/web/compressed.tracemonkey-pldi-09.pdf';
+        await loadPDF(samplePDFUrl);
+      }
+
+      // Handle PDF file upload
+      async function handlePDFUpload(event) {
+        const file = event.target.files[0];
+        if (file) {
+          const arrayBuffer = await file.arrayBuffer();
+          await loadPDF(arrayBuffer);
+        }
+      }
+
+      // Load PDF function
+      async function loadPDF(source) {
+        try {
+          currentPDF = await pdfjsLib.getDocument(source).promise;
+          currentPage = await currentPDF.getPage(1);
+
+          viewport = currentPage.getViewport({ scale: 1.5 });
+          canvas.width = viewport.width;
+          canvas.height = viewport.height;
+
+          drawRulers(viewport.width, viewport.height);
+
+          await currentPage.render({
+            canvasContext: ctx,
+            viewport: viewport,
+          }).promise;
+        } catch (error) {
+          console.error('Error loading PDF:', error);
+          alert('Error loading PDF. Please try again.');
+        }
+      }
+
+      // Preview text on PDF
+      async function previewText() {
+        if (!currentPage) {
+          alert('Please load a PDF first');
+          return;
+        }
+
+        // Re-render the page to clear previous preview
+        const viewport = currentPage.getViewport({ scale: 1.5 });
+        drawRulers(viewport.width, viewport.height);
+        await currentPage.render({
+          canvasContext: ctx,
+          viewport: viewport,
+        }).promise;
+
+        // Add text for each field
+        const groups = document.getElementsByClassName('form-group');
+        ctx.save();
+        // Set up coordinate system for PDF
+        ctx.scale(1.5, 1.5); // Scale to match PDF size
+        ctx.translate(0, viewport.height / 1.5); // Move origin to bottom
+        ctx.scale(1, -1); // Flip Y axis
+
+        for (let group of groups) {
+          const value = group.querySelector('.field-value').value;
+          const x = parseInt(group.querySelector('.x-coord').value);
+          const y = parseInt(group.querySelector('.y-coord').value);
+
+          if (value && !isNaN(x) && !isNaN(y)) {
+            ctx.font = '12px Arial'; // Smaller font since we're scaling
+            ctx.fillStyle = 'red';
+            ctx.textBaseline = 'top';
+            ctx.fillText(value, x, y);
+          }
+        }
+        ctx.restore();
+      }
+
+      function addField() {
+        fieldCount++;
+        const fieldDiv = document.createElement('div');
+        fieldDiv.className = 'form-group';
+        fieldDiv.innerHTML = `
+          <label>Field ${fieldCount}</label>
+          <input type="text" class="field-value" placeholder="Field Value" />
+          <div class="coordinates">
+            <input type="number" class="x-coord" placeholder="X" />
+            <input type="number" class="y-coord" placeholder="Y" />
+          </div>
+        `;
+        document.getElementById('fields-container').appendChild(fieldDiv);
+      }
+
+      function saveCoordinates() {
+        const fields = [];
+        const groups = document.getElementsByClassName('form-group');
+
+        for (let group of groups) {
+          fields.push({
+            value: group.querySelector('.field-value').value,
+            x: parseInt(group.querySelector('.x-coord').value),
+            y: parseInt(group.querySelector('.y-coord').value),
+          });
+        }
+
+        const json = JSON.stringify(fields, null, 2);
+        const blob = new Blob([json], { type: 'application/json' });
+        const url = URL.createObjectURL(blob);
+
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = 'pdf-coordinates.json';
+        a.click();
+
+        URL.revokeObjectURL(url);
+      }
+
+      // Add coordinate tracking
+      canvas.addEventListener('mousemove', (e) => {
+        const rect = canvas.getBoundingClientRect();
+        // Calculate coordinates in PDF space
+        const x = Math.round((e.clientX - rect.left - 30) / 1.5);
+        const y = Math.round(
+          (viewport.height - (e.clientY - rect.top - 20)) / 1.5
+        );
+
+        // Update coordinate display
+        const coordDisplay = document.getElementById('coordinate-display');
+        coordDisplay.style.left = e.clientX + 10 + 'px';
+        coordDisplay.style.top = e.clientY + 10 + 'px';
+        coordDisplay.textContent = `X: ${x}, Y: ${y}`;
+
+        // Update coordinates in the closest coordinate inputs
+        const activeElement = document.activeElement;
+        if (activeElement && activeElement.classList.contains('x-coord')) {
+          const coordGroup = activeElement.closest('.coordinates');
+          coordGroup.querySelector('.x-coord').value = x;
+          coordGroup.querySelector('.y-coord').value = y;
+        }
+      });
+
+      // Add mouse enter/leave events to show/hide coordinate display
+      canvas.addEventListener('mouseenter', () => {
+        document.getElementById('coordinate-display').style.display = 'block';
+      });
+
+      canvas.addEventListener('mouseleave', () => {
+        document.getElementById('coordinate-display').style.display = 'none';
+      });
+
+      // Add click handler to coordinate inputs to enable tracking
+      document.addEventListener('click', (e) => {
+        if (
+          e.target.classList.contains('x-coord') ||
+          e.target.classList.contains('y-coord')
+        ) {
+          const coordGroup = e.target.closest('.coordinates');
+          const xInput = coordGroup.querySelector('.x-coord');
+          xInput.focus();
+        }
+      });
+
+      // Function to load coordinates from JSON file
+      function loadCoordinates(event) {
+        const file = event.target.files[0];
+        if (file) {
+          const reader = new FileReader();
+          reader.onload = function (e) {
+            const coordinates = JSON.parse(e.target.result);
+            // Clear existing fields
+            document.getElementById('fields-container').innerHTML = '';
+            // Add fields from JSON
+            coordinates.forEach((coord, index) => {
+              if (index > 0) addField();
+              const groups = document.getElementsByClassName('form-group');
+              const group = groups[index];
+              group.querySelector('.field-value').value = coord.value;
+              group.querySelector('.x-coord').value = coord.x;
+              group.querySelector('.y-coord').value = coord.y;
+            });
+            // Preview the text
+            previewText();
+          };
+          reader.readAsText(file);
+        }
+      }
+    </script>
+    <div id="coordinate-display" class="coordinate-display"></div>
+  </body>
+</html>

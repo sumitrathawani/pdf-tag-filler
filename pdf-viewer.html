@@ -1,0 +1,120 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <title>PDF Viewer with Rulers</title>
+    <style>
+      .container {
+        position: relative;
+        margin: 20px;
+      }
+
+      #pdf-canvas {
+        border: 1px solid #ccc;
+      }
+
+      .ruler-x {
+        position: absolute;
+        top: 0;
+        left: 30px;
+        height: 20px;
+        background: #f0f0f0;
+      }
+
+      .ruler-y {
+        position: absolute;
+        top: 20px;
+        left: 0;
+        width: 30px;
+        background: #f0f0f0;
+      }
+
+      #coordinates {
+        position: fixed;
+        bottom: 20px;
+        right: 20px;
+        background: rgba(0, 0, 0, 0.7);
+        color: white;
+        padding: 10px;
+        border-radius: 5px;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="container">
+      <canvas id="ruler-x" class="ruler-x"></canvas>
+      <canvas id="ruler-y" class="ruler-y"></canvas>
+      <canvas id="pdf-canvas"></canvas>
+    </div>
+    <div id="coordinates">X: 0, Y: 0</div>
+
+    <input type="file" id="pdf-file" accept=".pdf" />
+
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/2.11.338/pdf.min.js"></script>
+    <script>
+      pdfjsLib.GlobalWorkerOptions.workerSrc =
+        'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/2.11.338/pdf.worker.min.js';
+
+      const canvas = document.getElementById('pdf-canvas');
+      const rulerX = document.getElementById('ruler-x');
+      const rulerY = document.getElementById('ruler-y');
+      const coordsDiv = document.getElementById('coordinates');
+      const ctx = canvas.getContext('2d');
+      const ctxX = rulerX.getContext('2d');
+      const ctxY = rulerY.getContext('2d');
+
+      function drawRulers(width, height) {
+        rulerX.width = width;
+        rulerX.height = 20;
+        rulerY.width = 30;
+        rulerY.height = height;
+
+        // Draw X ruler
+        ctxX.fillStyle = '#f0f0f0';
+        ctxX.fillRect(0, 0, width, 20);
+        ctxX.fillStyle = '#000';
+        for (let i = 0; i < width; i += 50) {
+          ctxX.fillText(i, i + 2, 10);
+          ctxX.fillRect(i, 10, 1, 10);
+        }
+
+        // Draw Y ruler
+        ctxY.fillStyle = '#f0f0f0';
+        ctxY.fillRect(0, 0, 30, height);
+        ctxY.fillStyle = '#000';
+        ctxY.save();
+        for (let i = 0; i < height; i += 50) {
+          ctxY.fillText(i, 2, i + 10);
+          ctxY.fillRect(20, i, 10, 1);
+        }
+        ctxY.restore();
+      }
+
+      canvas.addEventListener('mousemove', (e) => {
+        const rect = canvas.getBoundingClientRect();
+        const x = e.clientX - rect.left - 30;
+        const y = e.clientY - rect.top - 20;
+        coordsDiv.textContent = `X: ${Math.round(x)}, Y: ${Math.round(y)}`;
+      });
+
+      document
+        .getElementById('pdf-file')
+        .addEventListener('change', async (e) => {
+          const file = e.target.files[0];
+          const arrayBuffer = await file.arrayBuffer();
+          const pdf = await pdfjsLib.getDocument(arrayBuffer).promise;
+          const page = await pdf.getPage(1);
+
+          const viewport = page.getViewport({ scale: 1 });
+          canvas.width = viewport.width;
+          canvas.height = viewport.height;
+
+          drawRulers(viewport.width, viewport.height);
+
+          await page.render({
+            canvasContext: ctx,
+            viewport: viewport,
+          }).promise;
+        });
+    </script>
+  </body>
+</html>

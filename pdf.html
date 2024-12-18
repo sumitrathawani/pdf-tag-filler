@@ -1,0 +1,439 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>PDF Editor with Drag & Drop</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/2.11.338/pdf.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+    <style>
+      body {
+        margin: 0;
+        padding: 0;
+        display: flex;
+        height: 100vh;
+      }
+
+      #sidebar {
+        width: 250px;
+        background-color: #f0f0f0;
+        padding: 20px;
+        border-right: 1px solid #ccc;
+      }
+
+      .draggable-box {
+        width: 150px;
+        height: 40px;
+        background-color: rgba(0, 123, 255, 0.3);
+        border: 2px solid #0056b3;
+        margin: 15px auto;
+        cursor: move;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        user-select: none;
+        font-size: 14px;
+        padding: 0 10px;
+        border-radius: 4px;
+      }
+
+      .draggable-box:hover {
+        background-color: rgba(0, 123, 255, 0.4);
+        transform: translateY(-2px);
+        transition: all 0.2s ease;
+      }
+
+      #pdf-container {
+        flex-grow: 1;
+        position: relative;
+        overflow: auto;
+        padding: 20px;
+      }
+
+      #pdf-viewer {
+        position: relative;
+      }
+
+      .dropped-box {
+        position: absolute;
+        background-color: rgba(0, 123, 255, 0.3);
+        border: 2px solid #0056b3;
+        cursor: move;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+      }
+
+      #toolbar {
+        position: fixed;
+        top: 20px;
+        right: 20px;
+        z-index: 1000;
+      }
+
+      .btn {
+        padding: 10px 20px;
+        background-color: #0056b3;
+        color: white;
+        border: none;
+        border-radius: 4px;
+        cursor: pointer;
+        margin: 5px;
+      }
+
+      .btn:hover {
+        background-color: #003d82;
+      }
+
+      .ruler-x,
+      .ruler-y {
+        position: absolute;
+        background: rgba(200, 200, 200, 0.8);
+        z-index: 100;
+      }
+
+      .ruler-x {
+        height: 20px;
+        left: 0;
+        right: 0;
+        top: 0;
+      }
+
+      .ruler-y {
+        width: 20px;
+        top: 0;
+        bottom: 0;
+        left: 0;
+      }
+
+      .ruler-mark {
+        position: absolute;
+        color: #333;
+        font-size: 10px;
+      }
+
+      .ruler-mark.x {
+        top: 2px;
+        transform: translateX(-50%);
+        border-left: 1px solid #666;
+        padding-top: 2px;
+        height: 8px;
+      }
+
+      .ruler-mark.y {
+        left: 2px;
+        transform: translateY(-50%);
+        border-top: 1px solid #666;
+        padding-left: 2px;
+        width: 8px;
+      }
+    </style>
+  </head>
+  <body>
+    <div id="sidebar">
+      <h3>Draggable Elements</h3>
+      <div class="draggable-box" draggable="true">Publisher name</div>
+      <div class="draggable-box" draggable="true">Admin name</div>
+      <div class="draggable-box" draggable="true">Date</div>
+      <div class="draggable-box" draggable="true">Signature</div>
+    </div>
+
+    <div id="pdf-container">
+      <div id="toolbar">
+        <input type="file" id="pdf-upload" accept=".pdf" />
+        <button class="btn" id="download-btn">Download Modified PDF</button>
+      </div>
+      <div id="pdf-viewer"></div>
+    </div>
+
+    <script>
+      pdfjsLib.GlobalWorkerOptions.workerSrc =
+        'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/2.11.338/pdf.worker.min.js';
+
+      const pdfContainer = document.getElementById('pdf-container');
+      const pdfViewer = document.getElementById('pdf-viewer');
+      const pdfUpload = document.getElementById('pdf-upload');
+      const downloadBtn = document.getElementById('download-btn');
+      let currentPDF = null;
+      let droppedBoxesData = [];
+
+      // Handle PDF upload
+      pdfUpload.addEventListener('change', async (e) => {
+        const file = e.target.files[0];
+        if (file && file.type === 'application/pdf') {
+          const reader = new FileReader();
+          reader.onload = async function (event) {
+            const typedarray = new Uint8Array(event.target.result);
+            loadPDF(typedarray);
+          };
+          reader.readAsArrayBuffer(file);
+        }
+      });
+
+      async function loadPDF(pdfData) {
+        const loadingTask = pdfjsLib.getDocument(pdfData);
+        currentPDF = await loadingTask.promise;
+        renderPage(1);
+      }
+
+      async function renderPage(pageNumber) {
+        const page = await currentPDF.getPage(pageNumber);
+        const scale = 1.5;
+        const viewport = page.getViewport({ scale });
+
+        const canvas = document.createElement('canvas');
+        const context = canvas.getContext('2d');
+        canvas.height = viewport.height;
+        canvas.width = viewport.width;
+
+        const renderContext = {
+          canvasContext: context,
+          viewport: viewport,
+        };
+
+        pdfViewer.innerHTML = '';
+        pdfViewer.appendChild(canvas);
+        await page.render(renderContext).promise;
+
+        // Add rulers after rendering the page
+        createRulers();
+      }
+
+      function createRulers() {
+        const canvas = pdfViewer.querySelector('canvas');
+        if (!canvas) return;
+
+        // Remove existing rulers
+        const existingRulers = pdfViewer.querySelectorAll('.ruler-x, .ruler-y');
+        existingRulers.forEach((ruler) => ruler.remove());
+
+        // Create rulers
+        const rulerX = document.createElement('div');
+        const rulerY = document.createElement('div');
+        rulerX.className = 'ruler-x';
+        rulerY.className = 'ruler-y';
+
+        // Add marks every 100 points
+        const interval = 100;
+        const width = canvas.width;
+        const height = canvas.height;
+
+        // X-axis marks
+        for (let x = 0; x <= width; x += interval) {
+          const mark = document.createElement('div');
+          mark.className = 'ruler-mark x';
+          mark.style.left = `${(x / width) * 100}%`;
+          mark.textContent = x;
+          rulerX.appendChild(mark);
+        }
+
+        // Y-axis marks
+        for (let y = 0; y <= height; y += interval) {
+          const mark = document.createElement('div');
+          mark.className = 'ruler-mark y';
+          mark.style.top = `${(y / height) * 100}%`;
+          mark.textContent = y;
+          rulerY.appendChild(mark);
+        }
+
+        pdfViewer.appendChild(rulerX);
+        pdfViewer.appendChild(rulerY);
+      }
+
+      // Drag and Drop functionality
+      const draggableBoxes = document.querySelectorAll('.draggable-box');
+      draggableBoxes.forEach((box) => {
+        box.addEventListener('dragstart', (e) => {
+          e.dataTransfer.setData('text/plain', box.textContent);
+        });
+      });
+
+      pdfViewer.addEventListener('dragover', (e) => {
+        e.preventDefault();
+      });
+
+      function getExactCoordinates(event, element) {
+        const canvas = pdfViewer.querySelector('canvas');
+        const rect = canvas.getBoundingClientRect();
+        const scale = canvas.width / rect.width;
+
+        // Calculate coordinates relative to the canvas
+        const x = (event.clientX - rect.left) * scale;
+        const y = (event.clientY - rect.top) * scale;
+
+        // Round to nearest whole number
+        return {
+          x: Math.round(x),
+          y: Math.round(y),
+        };
+      }
+
+      pdfViewer.addEventListener('drop', (e) => {
+        e.preventDefault();
+        const boxType = e.dataTransfer.getData('text/plain');
+        const coords = getExactCoordinates(e, pdfViewer);
+
+        const droppedBox = document.createElement('div');
+        droppedBox.className = 'dropped-box';
+        droppedBox.textContent = `${boxType} (${coords.x}, ${coords.y})`;
+        droppedBox.style.width = '200px'; // Increased width to accommodate coordinates
+        droppedBox.style.height = '40px';
+        droppedBox.style.left =
+          e.clientX - pdfViewer.getBoundingClientRect().left - 100 + 'px';
+        droppedBox.style.top =
+          e.clientY - pdfViewer.getBoundingClientRect().top - 20 + 'px';
+
+        // Store the box data
+        const boxData = {
+          id: Date.now(),
+          type: boxType,
+          x: coords.x,
+          y: coords.y,
+        };
+        droppedBox.dataset.boxId = boxData.id;
+        droppedBoxesData.push(boxData);
+
+        makeDraggable(droppedBox);
+        pdfViewer.appendChild(droppedBox);
+
+        // Log the exact coordinates
+        console.log(`Dropped at coordinates - x: ${coords.x}, y: ${coords.y}`);
+      });
+
+      function makeDraggable(element) {
+        let pos1 = 0,
+          pos2 = 0,
+          pos3 = 0,
+          pos4 = 0;
+        element.onmousedown = dragMouseDown;
+
+        function dragMouseDown(e) {
+          e.preventDefault();
+          pos3 = e.clientX;
+          pos4 = e.clientY;
+          document.onmouseup = closeDragElement;
+          document.onmousemove = elementDrag;
+        }
+
+        function elementDrag(e) {
+          e.preventDefault();
+          pos1 = pos3 - e.clientX;
+          pos2 = pos4 - e.clientY;
+          pos3 = e.clientX;
+          pos4 = e.clientY;
+
+          element.style.top = element.offsetTop - pos2 + 'px';
+          element.style.left = element.offsetLeft - pos1 + 'px';
+
+          // Get coordinates relative to the canvas
+          const coords = getExactCoordinates(e, pdfViewer);
+          const boxType = element.textContent.split('(')[0].trim();
+          element.textContent = `${boxType} (${coords.x}, ${coords.y})`;
+
+          // Update the stored coordinates
+          const boxId = parseInt(element.dataset.boxId);
+          const boxIndex = droppedBoxesData.findIndex(
+            (box) => box.id === boxId
+          );
+          if (boxIndex !== -1) {
+            droppedBoxesData[boxIndex].x = coords.x;
+            droppedBoxesData[boxIndex].y = coords.y;
+          }
+        }
+
+        function closeDragElement() {
+          const finalEvent = {
+            clientX: pos3,
+            clientY: pos4,
+          };
+          const coords = getExactCoordinates(finalEvent, pdfViewer);
+          const boxId = parseInt(element.dataset.boxId);
+          const boxIndex = droppedBoxesData.findIndex(
+            (box) => box.id === boxId
+          );
+
+          if (boxIndex !== -1) {
+            droppedBoxesData[boxIndex].x = coords.x;
+            droppedBoxesData[boxIndex].y = coords.y;
+            console.log('Final coordinates:', coords);
+          }
+
+          document.onmouseup = null;
+          document.onmousemove = null;
+        }
+      }
+
+      // Download modified PDF
+      downloadBtn.addEventListener('click', async () => {
+        if (!currentPDF) return;
+
+        const { jsPDF } = window.jspdf;
+        const pdf = new jsPDF({
+          orientation: 'portrait',
+          unit: 'pt', // Use points for more precise positioning
+        });
+
+        // Get the canvas content
+        const canvas = pdfViewer.querySelector('canvas');
+        const imgData = canvas.toDataURL('image/png');
+
+        // Set PDF size to match the canvas dimensions
+        pdf.internal.pageSize.width = canvas.width;
+        pdf.internal.pageSize.height = canvas.height;
+
+        // Add the base PDF content
+        pdf.addImage(imgData, 'PNG', 0, 0, canvas.width, canvas.height);
+
+        // Add the dropped boxes
+        droppedBoxesData.forEach((boxData) => {
+          // Convert PDF coordinates to points
+          const x = boxData.x;
+          const y = pdf.internal.pageSize.height - boxData.y - 40; // Flip Y coordinate
+
+          const boxWidth = 200; // Set appropriate width
+          const boxHeight = 40; // Set appropriate height
+
+          // Draw the box
+          pdf.setFillColor(0, 123, 255, 0.3);
+          pdf.setDrawColor(0, 86, 179);
+          pdf.rect(x, y, boxWidth, boxHeight, 'FD');
+
+          // Add the text
+          pdf.setTextColor(0, 0, 0);
+          pdf.setFontSize(12);
+          const textX = x + 10; // Add some padding
+          const textY = y + 25; // Vertical center
+          pdf.text(
+            `${boxData.type} (${Math.round(x)}, ${Math.round(y)})`,
+            textX,
+            textY
+          );
+        });
+
+        pdf.save('modified-document.pdf');
+      });
+
+      // Add this to show current mouse position
+      pdfViewer.addEventListener('mousemove', (e) => {
+        const coords = getExactCoordinates(e, pdfViewer);
+        // Update cursor position display
+        const cursorPos = document.createElement('div');
+        cursorPos.style.position = 'fixed';
+        cursorPos.style.top = '5px';
+        cursorPos.style.right = '5px';
+        cursorPos.style.background = 'rgba(0,0,0,0.7)';
+        cursorPos.style.color = 'white';
+        cursorPos.style.padding = '5px';
+        cursorPos.style.borderRadius = '3px';
+        cursorPos.textContent = `X: ${coords.x}, Y: ${coords.y}`;
+
+        // Remove old cursor position display
+        const oldCursorPos = document.querySelector('.cursor-position');
+        if (oldCursorPos) oldCursorPos.remove();
+
+        cursorPos.className = 'cursor-position';
+        document.body.appendChild(cursorPos);
+      });
+    </script>
+  </body>
+</html>
